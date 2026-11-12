@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Генерация QR-кодов из файлов WireGuard (.conf).
-Перезаписывает существующие PNG с тем же именем.
+Генерация QR-кодов из текстовых файлов по glob-шаблону.
+
+По умолчанию обрабатывает *.conf.
+Имена PNG:
+  peer-12.conf     → peer-12.png
+  peer-11.vpnuri   → peer-11.vpnuri.png
 """
 
 import argparse
@@ -30,23 +34,46 @@ def generate_qr(data: str, output_path: Path, box_size: int = 10, border: int = 
     img.save(output_path)
 
 
-def find_conf_files(root: Path, recursive: bool) -> list[Path]:
-    """Возвращает список файлов *.conf в зависимости от флага recursive."""
-    if recursive:
-        return list(root.rglob("*.conf"))
-    return list(root.glob("*.conf"))
+def output_png_path(source: Path) -> Path:
+    """Путь PNG, который не сталкивает разные расширения в одно имя.
+
+    *.conf сохраняет прежнее имя (peer-12.conf → peer-12.png).
+    Остальные файлы получают .png в конце (peer-11.vpnuri → peer-11.vpnuri.png).
+    """
+    if source.suffix.lower() == ".conf":
+        return source.with_suffix(".png")
+    return source.with_name(source.name + ".png")
+
+
+def find_source_files(root: Path, pattern: str, recursive: bool) -> list[Path]:
+    """Возвращает текстовые исходники по шаблону. Готовые PNG пропускает."""
+    iterator = root.rglob(pattern) if recursive else root.glob(pattern)
+    return sorted(
+        path for path in iterator
+        if path.is_file() and path.suffix.lower() != ".png"
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Генерация QR-кодов для всех файлов *.conf в указанной папке.",
-        epilog="Пример: python qr_creator.py --path C:\\Users\\User\\clients --apply -y",
+        description="Генерация QR-кодов для текстовых файлов по glob-шаблону.",
+        epilog=(
+            "Примеры:\n"
+            "  python qr_creator.py --path C:\\Users\\User\\clients --apply -y\n"
+            "  python qr_creator.py --path C:\\Users\\User\\clients --pattern \"*.vpnuri\" --apply\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--path",
         type=Path,
         default=Path("."),
-        help="Папка с файлами .conf (по умолчанию: текущая директория)",
+        help="Папка с исходными файлами (по умолчанию: текущая директория)",
+    )
+    parser.add_argument(
+        "--pattern",
+        default="*.conf",
+        help="Glob-шаблон исходных файлов: '*.conf', '*.vpnuri', '*.txt' (по умолчанию: *.conf)",
     )
     parser.add_argument(
         "--apply",
@@ -61,7 +88,7 @@ def main() -> None:
     parser.add_argument(
         "--recursive",
         action="store_true",
-        help="Искать .conf рекурсивно во вложенных папках",
+        help="Искать файлы рекурсивно во вложенных папках",
     )
     parser.add_argument(
         "--box-size",
@@ -85,15 +112,15 @@ def main() -> None:
         print(f"Ошибка: '{args.path}' не является директорией.")
         sys.exit(1)
 
-    conf_files = find_conf_files(args.path, args.recursive)
+    source_files = find_source_files(args.path, args.pattern, args.recursive)
 
-    if not conf_files:
-        print(f"В папке '{args.path}' не найдено файлов *.conf.")
+    if not source_files:
+        print(f"В папке '{args.path}' не найдено файлов по шаблону '{args.pattern}'.")
         return
 
-    print(f"Найдено {len(conf_files)} файл(ов) .conf:")
-    for f in conf_files:
-        print(f"  - {f}")
+    print(f"Найдено {len(source_files)} файл(ов), шаблон '{args.pattern}':")
+    for source in source_files:
+        print(f"  - {source} → {output_png_path(source)}")
 
     if not args.apply:
         print("\n[РЕЖИМ ПРЕДПРОСМОТРА] Ничего не записано. Добавьте флаг --apply для реальной генерации.")
@@ -107,19 +134,19 @@ def main() -> None:
 
     success = 0
     errors = 0
-    for conf_path in conf_files:
+    for source in source_files:
         try:
-            content = conf_path.read_text(encoding="utf-8")
+            content = source.read_text(encoding="utf-8")
             if not content.strip():
-                print(f"Пропуск (пустой файл): {conf_path}")
+                print(f"Пропуск (пустой файл): {source}")
                 continue
 
-            png_path = conf_path.with_suffix(".png")
+            png_path = output_png_path(source)
             generate_qr(content, png_path, box_size=args.box_size, border=args.border)
-            print(f"✓ {conf_path} → {png_path}")
+            print(f"✓ {source} → {png_path}")
             success += 1
         except Exception as e:
-            print(f"✗ Ошибка при обработке {conf_path}: {e}")
+            print(f"✗ Ошибка при обработке {source}: {e}")
             errors += 1
 
     print(f"\nГотово: успешно {success}, ошибок {errors}.")
